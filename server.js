@@ -3,6 +3,12 @@ const cors = require("cors");
 
 const app = express();
 
+const app = express();
+
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok' });
+});
+
 app.use(cors());
 app.use(express.json());
 
