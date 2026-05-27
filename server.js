@@ -1,91 +1,71 @@
 const express = require("express");
 const cors = require("cors");
-const path = require("path");
 const fs = require("fs");
+const path = require("path");
 const os = require("os");
 const crypto = require("crypto");
-const ffmpegPath = require("ffmpeg-static");
+
 const youtubedl = require("youtube-dl-exec");
+const ffmpegPath = require("ffmpeg-static");
 
 const app = express();
+
 app.use(cors());
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json());
 
-const ALLOWED = [
-  /(^|\.)youtube\.com$/, /(^|\.)youtu\.be$/,
-  /(^|\.)tiktok\.com$/,
-  /(^|\.)instagram\.com$/,
-  /(^|\.)facebook\.com$/, /(^|\.)fb\.watch$/,
-  /(^|\.)x\.com$/, /(^|\.)twitter\.com$/,
-  /(^|\.)reddit\.com$/,
-  /(^|\.)pinterest\.com$/, /(^|\.)pin\.it$/,
-];
-
-function isAllowed(raw) {
-  try {
-    const u = new URL(raw);
-    if (!/^https?:$/.test(u.protocol)) return false;
-    const host = u.hostname.replace(/^www\./, "").toLowerCase();
-    return ALLOWED.some((re) => re.test(host));
-  } catch {
-    return false;
-  }
-}
-
-app.get("/", (_req, res) => {
-  res.json({ ok: true, service: "reeloops-backend" });
+app.get("/", (req, res) => {
+  res.send("Backend running");
 });
 
-app.get("/health", (_req, res) => {
-  res.json({ status: "ok" });
+app.get("/health", (req, res) => {
+  res.json({
+    status: "ok",
+    ffmpeg: ffmpegPath
+  });
 });
 
 app.post("/api/download", async (req, res) => {
-  const { url } = req.body || {};
-
-  if (!url || typeof url !== "string" || !isAllowed(url)) {
-    return res.status(400).json({ error: "Invalid or unsupported URL" });
-  }
-
-  const id = crypto.randomBytes(8).toString("hex");
-  const outFile = path.join(os.tmpdir(), `${id}.mp4`);
-
   try {
-    await youtubedl(url, {
-      output: outFile,
-      format: "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/best",
-      mergeOutputFormat: "mp4",
-      noPlaylist: true,
-      noWarnings: true,
-      ffmpegLocation: ffmpegPath,
-      retries: 2,
-      socketTimeout: 30
-    });
+    const { url } = req.body;
 
-    if (!fs.existsSync(outFile)) {
-      throw new Error("Download failed");
+    if (!url) {
+      return res.status(400).json({
+        error: "No URL provided"
+      });
     }
 
-    res.setHeader("Content-Type", "video/mp4");
-    res.setHeader("Content-Disposition", `attachment; filename="reeloops-${id}.mp4"`);
+    const id = crypto.randomBytes(6).toString("hex");
+    const output = path.join(os.tmpdir(), `${id}.mp4`);
 
-    const stream = fs.createReadStream(outFile);
-    stream.pipe(res);
+    console.log("Downloading:", url);
 
-    stream.on("close", () => fs.unlink(outFile, () => {}));
-    stream.on("error", () => fs.unlink(outFile, () => {}));
+    await youtubedl(url, {
+      output,
+      format: "mp4",
+      ffmpegLocation: ffmpegPath,
+    });
+
+    if (!fs.existsSync(output)) {
+      return res.status(500).json({
+        error: "File was not created"
+      });
+    }
+
+    res.download(output, () => {
+      fs.unlinkSync(output);
+    });
+
   } catch (err) {
-    fs.unlink(outFile, () => {});
-    console.error("download error:", err?.stderr || err?.message || err);
+    console.error(err);
 
     res.status(500).json({
-      error: "Could not download this video. It may be private, region-locked, or unsupported."
+      error: err.message || "Download failed"
     });
   }
 });
 
-const PORT = process.env.PORT || 10000;
+const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-  console.log(`listening on ${PORT}`);
+  console.log(`Server running on ${PORT}`);
 });
